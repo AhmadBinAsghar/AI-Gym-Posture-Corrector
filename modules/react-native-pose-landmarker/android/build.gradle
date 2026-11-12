@@ -1,0 +1,117 @@
+buildscript {
+  ext.getExtOrDefault = { name ->
+    return rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties['PoseLandmarker_' + name]
+  }
+
+  repositories {
+    google()
+    mavenCentral()
+  }
+
+  dependencies {
+    classpath "com.android.tools.build:gradle:8.7.2"
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${getExtOrDefault('kotlinVersion')}"
+  }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+apply plugin: "com.facebook.react"
+
+def reactNativeArchitectures() {
+  def value = rootProject.getProperties().get("reactNativeArchitectures")
+  return value ? value.split(",") : ["armeabi-v7a", "x86", "x86_64", "arm64-v8a"]
+}
+
+def getExtOrIntegerDefault(name) {
+  return rootProject.ext.has(name) ? rootProject.ext.get(name) : (project.properties["PoseLandmarker_" + name]).toInteger()
+}
+
+android {
+  namespace "com.poselandmarker"
+
+  ndkVersion getExtOrDefault("ndkVersion")
+  compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
+
+  defaultConfig {
+    minSdkVersion getExtOrIntegerDefault("minSdkVersion")
+    targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
+
+    externalNativeBuild {
+      cmake {
+        cppFlags "-frtti -fexceptions -Wall -Wextra -fstack-protector-all"
+        arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+        abiFilters (*reactNativeArchitectures())
+
+        buildTypes {
+          debug { cppFlags "-O1 -g" }
+          release { cppFlags "-O2" }
+        }
+      }
+    }
+  }
+
+  externalNativeBuild {
+    cmake { path "CMakeLists.txt" }
+  }
+
+  buildFeatures {
+    buildConfig true
+    prefab true
+    prefabPublishing true
+  }
+
+  prefab {
+    PoseLandmarker {
+      headers "${project.buildDir}/headers/poselandmarker/"
+    }
+  }
+
+  buildTypes {
+    release { minifyEnabled false }
+  }
+
+  lintOptions { disable "GradleCompatible" }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+
+  sourceSets {
+    main {
+      java.srcDirs += [
+        "../nitrogen/generated/android/kotlin/com/margelo/nitro/poselandmarker",
+      ]
+    }
+  }
+}
+
+repositories {
+  mavenCentral()
+  google()
+}
+
+def kotlin_version = getExtOrDefault("kotlinVersion")
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  api project(":react-native-vision-camera")
+  implementation project(":react-native-nitro-modules")
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+  implementation "androidx.camera:camera-core:1.5.2"
+
+  // Bundled (offline) ML Kit pose model - base (fast) variant.
+  implementation "com.google.mlkit:pose-detection:18.0.0-beta5"
+}
+
+tasks.register('prepareHeaders', Copy) {
+  from fileTree('./src/main/cpp').filter { it.isFile() }
+  from fileTree('../nitrogen/generated/android/c++').filter { it.isFile() }
+  from fileTree('../nitrogen/generated/shared/c++').filter { it.isFile() }
+  include "*.hpp"
+  into "${project.buildDir}/headers/poselandmarker/PoseLandmarker/"
+  includeEmptyDirs = false
+}
+
+preBuild.dependsOn(prepareHeaders)
