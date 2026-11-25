@@ -4,6 +4,7 @@ import SplashScreen from '../features/splash/screens/SplashScreen';
 import OnboardingScreen from '../features/onboard/screens/OnboardingScreen';
 import LoginScreen from '../features/auth/login/screens/LoginScreen';
 import RegisterScreen from '../features/auth/register/screens/RegisterScreen';
+import ForgotPasswordScreen from '../features/auth/forgot/screens/ForgotPasswordScreen';
 import DashboardScreen from '../features/dashboard/screens/DashboardScreen';
 import HistoryScreen from '../features/history/screens/HistoryScreen';
 import CameraScreen from '../features/camera/screens/CameraScreen';
@@ -21,6 +22,7 @@ const StackNavigation = () => {
 
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
     </Stack.Navigator>
   );
 };

@@ -7,6 +7,7 @@ import {store, persistor} from './src/redux/store';
 import { NavigationContainer } from '@react-navigation/native'
 import StackNavigation from './src/navigations/StackNavigation'
 import { useAutoSync } from './src/hooks/useAutoSync'
+import { AppDialogHost } from './src/components/AppDialog'
 
 enableScreens();
 
@@ -29,6 +30,8 @@ const App = () => {
           />
           <StackNavigation />
         </NavigationContainer>
+        {/* App-themed pop-ups (replaces the system Alert.alert everywhere) */}
+        <AppDialogHost />
       </PersistGate>
     </Provider>
   )

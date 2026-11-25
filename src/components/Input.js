@@ -10,6 +10,7 @@ const Input = ({
   keyboardType = 'default',
   autoCapitalize = 'none',
   error = '',
+  maxLength,
 }) => {
   const inputStyles = [
     styles.inputContainer,
@@ -34,6 +35,7 @@ const Input = ({
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           autoCorrect={false}
+          maxLength={maxLength}
           style={styles.textInput}
         />
       </View>

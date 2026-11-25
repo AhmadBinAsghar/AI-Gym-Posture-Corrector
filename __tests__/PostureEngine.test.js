@@ -114,6 +114,48 @@ describe('squat form', () => {
     expect(last.warning).toContain('too deep');
     expect(last.joints.leftKnee.correct).toBe(false);
   });
+
+  // Side view facing right: the shin tips forward by `shinDeg` from vertical, the knee bends
+  // to `kneeDeg`, the trunk stays upright. Feet flat unless `heelUp` (px the heel rises).
+  const legPose = (shinDeg, kneeDeg, heelUp = 0) => {
+    const ankle = { x: 200, y: 700 };
+    const knee = { x: ankle.x + 150 * Math.sin(rad(shinDeg)), y: ankle.y - 150 * Math.cos(rad(shinDeg)) };
+    const ux = (ankle.x - knee.x) / 150;
+    const uy = (ankle.y - knee.y) / 150;
+    const rot = a => ({ x: ux * Math.cos(a) - uy * Math.sin(a), y: ux * Math.sin(a) + uy * Math.cos(a) });
+    const [a, b] = [rot(rad(kneeDeg)), rot(-rad(kneeDeg))];
+    const dir = a.x < b.x ? a : b; // hip behind the knee
+    const hip = { x: knee.x + 150 * dir.x, y: knee.y + 150 * dir.y };
+    return {
+      leftShoulder: { x: hip.x + 20, y: hip.y - 180 },
+      leftHip: hip,
+      leftKnee: knee,
+      leftAnkle: ankle,
+      leftHeel: { x: ankle.x - 20, y: ankle.y + 15 - heelUp },
+      leftFootIndex: { x: ankle.x + 60, y: ankle.y + 20 },
+    };
+  };
+
+  test('knees past the toes with heels down is fine (the live knee-forward squat, shin ~33 deg)', () => {
+    const { last } = run(squat, [legPose(33, 95)], { framesPerPose: 8 });
+    expect(last.isTracking).not.toBe(false);
+    expect(last.warning).toBe('');
+    expect(last.isPostureCorrect).toBe(true);
+  });
+
+  test('extreme forward knee travel is flagged on the knee', () => {
+    const { last } = run(squat, [legPose(55, 100)], { framesPerPose: 8 });
+    expect(last.warning).toContain('Knees too far forward');
+    expect(last.joints.leftKnee.correct).toBe(false);
+  });
+
+  // Heel lift is not judged: live, flat-footed standing already read the heel up to 89% of a
+  // foot length above the toes, so the landmark cannot tell a real lift from noise.
+  test('a heel reading above the toes does not raise a warning (too noisy to judge)', () => {
+    const { last } = run(squat, [legPose(30, 100, 50)], { framesPerPose: 8 });
+    expect(last.warning).toBe('');
+    expect(last.isPostureCorrect).toBe(true);
+  });
 });
 
 describe('squat rep counting', () => {
@@ -487,6 +529,62 @@ describe('pushup', () => {
   test('counts a rep per full down/up cycle', () => {
     const poses = [170, 130, 90, 85, 130, 165, 170].map(e => pushupPose(e));
     expect(run(pushup, poses).reps).toBe(1);
+  });
+
+  // Live at ~5fps: four quick reps whose tops lasted 1-2 frames at only 140-150 were all
+  // missed (the old rule wanted 155 for 3 frames). Elbow angles per frame, 200ms apart.
+  test('counts fast reps whose top lasts only a couple of frames', () => {
+    const start = [165, 165, 165, 165, 165, 165];
+    const rep = [120, 90, 80, 85, 145, 148];
+    const poses = [...start, ...rep, ...rep, ...rep, ...rep, 160, 160].map(e => pushupPose(e));
+    expect(run(pushup, poses, { framesPerPose: 1, dt: 200 }).reps).toBe(4);
+  });
+
+  // Landmarks captured live (landscape, 960x540) at the bottom of a rep: the left forearm
+  // collapsed to ~19px while the right arm stayed clean. This used to drop tracking.
+  const P = (x, y) => ({ x, y, correct: true });
+  const liveBottom = {
+    leftShoulder: P(243, 178), leftElbow: P(307, 174), leftWrist: P(315, 191),
+    leftHip: P(368, 180), leftKnee: P(463, 197), leftAnkle: P(562, 198),
+    rightShoulder: P(227, 171), rightElbow: P(282, 160), rightWrist: P(280, 214),
+    rightHip: P(360, 171), rightKnee: P(463, 196), rightAnkle: P(569, 200),
+  };
+
+  // Captured live: a visibly sagging body. The knees dropped with the hips, so shoulder-hip-
+  // knee read 166 ("straight") and the old knee-based check called this correct posture.
+  const liveSag = {
+    leftShoulder: P(290, 7), leftElbow: P(302, 120), leftWrist: P(277, 204),
+    leftHip: P(448, 157), leftKnee: P(521, 199), leftAnkle: P(695, 192),
+    rightShoulder: P(269, 27), rightElbow: P(265, 177), rightWrist: P(206, 261),
+    rightHip: P(446, 168), rightKnee: P(617, 215), rightAnkle: P(773, 184),
+  };
+
+  test('a sag is judged against the ankle, so dropped knees cannot hide it', () => {
+    const r = run(pushup, [liveSag], { framesPerPose: 8 }).last;
+    expect(r.warning).toContain('sag your hips');
+    expect(r.joints.leftHip.correct).toBe(false);
+  });
+
+  test('falls back to the other side when one forearm collapses at the bottom', () => {
+    const r = run(pushup, [liveBottom], { framesPerPose: 8 });
+    expect(r.last.isTracking).not.toBe(false);
+    expect(r.last.warning).toBe('');
+  });
+
+  test('a tracked body survives a few junk frames without re-earning the streak', () => {
+    let state;
+    for (let i = 0; i < 8; i++) state = pushup(pushupPose(170), state, 1000 + i * 100).nextState;
+    const junk = { leftShoulder: P(100, 300) }; // nothing plausible
+    for (let i = 0; i < GUARDS.maxMisses; i++) {
+      const r = pushup(junk, state, 2000 + i * 100);
+      expect(r.warning).toBe(''); // no "Position for pushup" flash
+      state = r.nextState;
+    }
+    // The very next good frame is scored straight away.
+    expect(pushup(pushupPose(170), state, 3000).isTracking).not.toBe(false);
+    // But a body that stays gone is dropped.
+    for (let i = 0; i <= GUARDS.maxMisses; i++) state = pushup(junk, state, 4000 + i * 100).nextState;
+    expect(pushup(junk, state, 5000).warning).toBe('Position for pushup');
   });
 });
 

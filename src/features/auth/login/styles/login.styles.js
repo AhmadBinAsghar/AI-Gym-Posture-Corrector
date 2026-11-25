@@ -77,6 +77,10 @@ export const styles = StyleSheet.create({
     fontSize: hp('1.7%'),
     fontWeight: '700',
   },
+  forgotRow: {
+    alignSelf: 'flex-end',
+    paddingVertical: 4,
+  },
   logoText: {
     fontSize: hp('6.5%'),
     marginBottom: hp('1%'),

@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
-import { Alert, Dimensions } from 'react-native';
+import { Dimensions } from 'react-native';
+import { showDialog } from '../../../components/AppDialog';
 import { useDispatch, useSelector } from 'react-redux';
 import { CommonResolutions, useCameraDevice, useCameraPermission, useFrameOutput } from 'react-native-vision-camera';
 import { createSynchronizable, runOnJS } from 'react-native-worklets';
 import { createPoseLandmarker, createSpeaker } from 'react-native-pose-landmarker';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { PostureEngine, GUARDS, TURN_SIDEWAYS_WARNING } from '../../../utils/postureEngine';
 import { mapPoseToScreen } from '../../../utils/poseMapping';
 import { generateMockJoints } from '../../../utils/mockJoints';
 import { createWarningFilter } from '../../../utils/warningFilter';
 import { createJointSmoother } from '../../../utils/jointSmoother';
 import { introFor } from '../../../utils/introSpeech';
+import { lockLandscape, lockPortrait, wantsLandscape } from '../../../utils/orientation';
 import { createPresenceReminder, reminderFor } from '../../../utils/presenceReminder';
 import { createVoiceCoach } from '../../../utils/voiceFeedback';
 import { updateSkeleton, setPostureWarning, incrementDuration, stopWorkout, resetWorkoutState } from '../../../redux/slices/exerciseSlice';
@@ -22,7 +24,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // back with no pose at all (or a joint ML Kit lost). Blanking the skeleton on those single
 // frames is what made it visibly flicker and vanish mid-rep; the last accepted pose is held
 // for this long instead. Short enough that walking out of frame still clears it.
-const SKELETON_HOLD_MS = 350;
+const SKELETON_HOLD_MS = 600; // covers GUARDS.maxMisses frames even at the phone's slower ~5-8fps
 
 export const useCamera = () => {
   const dispatch = useDispatch();
@@ -73,7 +75,12 @@ export const useCamera = () => {
   const speaker = useMemo(() => createSpeaker(), []);
   const coachRef = useRef(createVoiceCoach());
   // Smooths the banner/voice text; scoring still uses each raw frame.
-  const warningFilterRef = useRef(createWarningFilter());
+  // Pushups get a quicker banner: the bottom of a rep lasts ~0.5s, so the default 700ms wait
+  // showed "Don't sag your hips!" only after the moment had passed (or never). The skeleton's
+  // red joints are per-frame either way; this only times the text and voice.
+  const warningFilterRef = useRef(
+    createWarningFilter(activeExercise === 'Pushups' ? { showAfterMs: 350, holdMs: 1500 } : undefined)
+  );
   const reminderRef = useRef(createPresenceReminder());
   const isTrackingRef = useRef(false);
   const rawWarningRef = useRef(''); // the engine's latest verdict, before smoothing
@@ -234,6 +241,36 @@ export const useCamera = () => {
       );
     }
 
+    // TEMP DIAG: pushup and squat tuning.
+    if (
+      (exerciseRef.current === 'Pushups' || exerciseRef.current === 'Deep Squats') &&
+      recordingRef.current &&
+      (diagNow - lastCurlLogRef.current > 150 || evaluationResult.isRepCompleted)
+    ) {
+      const fps = Math.round((diagFramesRef.current * 1000) / Math.max(1, diagNow - lastCurlLogRef.current));
+      diagFramesRef.current = 0;
+      lastCurlLogRef.current = diagNow;
+      const nj = normalizedJoints;
+      const A = (a, b, c) => (a && b && c ? Math.round(PostureEngine.calculateAngle(a, b, c)) : -1);
+      const p = j => (j ? `${Math.round(j.x)},${Math.round(j.y)}` : '-');
+      const side = s => {
+        const S = nj[`${s}Shoulder`], E = nj[`${s}Elbow`], W = nj[`${s}Wrist`];
+        const H = nj[`${s}Hip`], K = nj[`${s}Knee`], An = nj[`${s}Ankle`];
+        return `${s[0]}:S=${p(S)} E=${p(E)} W=${p(W)} H=${p(H)} K=${p(K)} A=${p(An)}` +
+          ` Hl=${p(nj[`${s}Heel`])} T=${p(nj[`${s}FootIndex`])}` +
+          ` elb=${A(S, E, W)} hip=${A(S, H, K)} knee=${A(H, K, An)}`;
+      };
+      const st = evaluationResult.nextState || {};
+      const tag = exerciseRef.current === 'Pushups' ? '[pushup]' : '[squat]';
+      console.log(
+        `${tag} ${side('left')} | ${side('right')}` +
+        ` | track=${isTrackedFrame} ok=${evaluationResult.isPostureCorrect} warn=${evaluationResult.warning || '-'}` +
+        ` ph=${st.phase || '-'}/${st.streak ?? '-'} pend=${st.pending ? `${st.pending.to}${st.pending.count}` : '-'}` +
+        ` reps=${evaluationResult.isRepCompleted ? 'REP' : '-'} nose=${p(nj.nose)} fps=${fps}` +
+        ` img=${pose.imageWidth}x${pose.imageHeight} view=${Math.round(viewSizeRef.current.width)}x${Math.round(viewSizeRef.current.height)}`
+      );
+    }
+
     const { joints, isTracking: hasJoints } = resolveJoints(evaluationResult.joints, isTrackedFrame);
 
     dispatch(updateSkeleton({
@@ -313,6 +350,17 @@ export const useCamera = () => {
     },
   });
 
+  // Pushups are filmed lying down, so their camera turns the screen to landscape; the rest of
+  // the app stays portrait. Tied to focus rather than mount: "Save and Sync" pushes History on
+  // top of this screen, and a mount-based lock left History stuck sideways.
+  useFocusEffect(
+    useCallback(() => {
+      if (!wantsLandscape(activeExercise)) return undefined;
+      lockLandscape();
+      return lockPortrait;
+    }, [activeExercise])
+  );
+
   useEffect(() => {
     if (!hasPermission) requestPermission();
   }, [hasPermission, requestPermission]);
@@ -354,7 +402,8 @@ export const useCamera = () => {
     const normalizedJoints = generateMockJoints(
       activeExercise,
       { kneeSlider, backSlider, elbowSlider, elbowTuckSlider, hipSlider },
-      { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }
+      // The live view size, not the launch-time screen size: in landscape those differ.
+      viewSize
     );
 
     let evaluationResult = {
@@ -394,6 +443,7 @@ export const useCamera = () => {
     elbowSlider,
     elbowTuckSlider,
     hipSlider,
+    viewSize,
     dispatch,
   ]);
 
@@ -457,17 +507,25 @@ export const useCamera = () => {
     setCameraType(prev => (prev === 'front' ? 'back' : 'front'));
   }, []);
 
+  // Set once the user has chosen Discard or Save, so leaving this screen is no longer
+  // intercepted (also covers a later reset of the stack, e.g. logging out).
+  const leavingRef = useRef(false);
+  const summaryOpenRef = useRef(false);
+
   const handleStopWorkout = () => {
+    if (summaryOpenRef.current) return; // Back pressed again while the summary is up
+    summaryOpenRef.current = true;
     speaker.stop();
     setIsPaused(true);
-    Alert.alert(
-      'Workout Completed! 🎉',
-      `Awesome job! Here is your summary:\n\nRepetitions: ${reps}\nForm Accuracy: ${accuracyScore}%\nCalories Burned: ${calories} kcal\nActive time: ${duration}s`,
+    showDialog(
+      'Workout Completed!',
+      `Awesome job on your ${activeExercise}. Here is your summary:`,
       [
         {
           text: 'Discard Workout',
           style: 'destructive',
           onPress: () => {
+            leavingRef.current = true;
             dispatch(stopWorkout());
             dispatch(resetWorkoutState());
             navigation.goBack();
@@ -477,6 +535,7 @@ export const useCamera = () => {
           text: 'Save and Sync',
           style: 'default',
           onPress: () => {
+            leavingRef.current = true;
             dispatch(stopWorkout());
             dispatch(addWorkoutLog({
               userId: user?.id,
@@ -493,9 +552,31 @@ export const useCamera = () => {
           },
         },
       ],
-      { cancelable: false }
+      {
+        icon: '🎉',
+        details: [
+          { label: 'Repetitions', value: String(reps) },
+          { label: 'Form Accuracy', value: `${accuracyScore}%` },
+          { label: 'Calories Burned', value: `${calories} kcal` },
+          { label: 'Active Time', value: `${duration}s` },
+        ],
+      }
     );
   };
+
+  // The phone's Back button (or a back swipe) mid-workout shows the same summary as Finish
+  // instead of silently dropping the session. Leaving is allowed once Discard/Save is chosen.
+  const stopWorkoutRef = useRef(handleStopWorkout);
+  stopWorkoutRef.current = handleStopWorkout;
+  useEffect(
+    () =>
+      navigation.addListener('beforeRemove', e => {
+        if (leavingRef.current) return;
+        e.preventDefault();
+        stopWorkoutRef.current();
+      }),
+    [navigation]
+  );
 
   return {
     user,

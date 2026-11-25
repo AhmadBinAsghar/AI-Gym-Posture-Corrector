@@ -181,3 +181,42 @@ export const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+
+/**
+ * Overrides for the landscape (pushup) camera. The portrait styles above are sized from the
+ * launch-time portrait screen (wp/hp do not follow rotation), so on a ~360dp-tall landscape
+ * screen they would stack the HUD right across the lying body. The screen hides the status
+ * bar here (it covered the badge row), the stats join the top badge row, the controls are one
+ * thin bottom row, and the calibration toggle tucks into the top-right corner under the
+ * badges. The body lies on the floor (outline at 52-65% of the height, its hint just below),
+ * so the band between the badges and the outline is the free space; the warning sits there
+ * on the left and the calibration panel opens downward on the right.
+ * `left: 'auto'` (not undefined) is what actually clears the portrait `left`.
+ */
+export const landscapeStyles = StyleSheet.create({
+  hudOverlay: {
+    top: 8,
+    bottom: 8,
+    left: 24,
+    right: 24,
+  },
+  iconBtn: {
+    height: 40,
+  },
+  calibrationContainer: {
+    top: 54,
+    bottom: 'auto',
+    left: 'auto',
+    right: 24,
+    width: 290,
+    padding: 8,
+  },
+  calibrationScroll: {
+    maxHeight: 110,
+  },
+  alert: {
+    top: 54,
+    left: 24,
+    right: 330,
+  },
+});

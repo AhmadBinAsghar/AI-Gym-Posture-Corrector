@@ -5,7 +5,8 @@
 
 /** Single source of truth for every angle limit (degrees); the calibration UI reads these too. */
 export const THRESHOLDS = {
-  squat: { backMax: 35, kneeTooDeep: 60, downAt: 105, upAt: 160 },
+  // kneeForwardMax: shin lean from vertical (live knee-forward squat: 32-33, fine).
+  squat: { backMax: 35, kneeTooDeep: 60, downAt: 105, upAt: 160, kneeForwardMax: 45 },
   // handAtShoulder / handAtHip are ratios, not degrees: how far the wrist hangs below the
   // shoulder as a fraction of the trunk. See evaluateBicepCurl for why the curl needs them.
   // Tuned on a live front-view capture: the top of a real curl read elbow 30-70 deg (noisy,
@@ -13,7 +14,10 @@ export const THRESHOLDS = {
   // judgeFlareFrom: the flare is only judged with the arm this straight -- the elbow landmark
   // wanders outward once the forearm comes up towards the camera.
   curl: { tuckMax: 25, flexedAt: 70, extendedAt: 145, handAtShoulder: 0.35, handAtHip: 0.6, judgeFlareFrom: 120, surelyFlexedAt: 50 },
-  pushup: { hipMin: 150, downAt: 100, upAt: 155 },
+  // sagMin/pikeMin: shoulder-hip-ankle line (live: straight 173-179, visible sag 143-162).
+  // hipMin: shoulder-hip-knee fallback when the ankle is not visible.
+  // downAt/upAt: live fast reps topped out at only ~130-160 for a frame or two between dips.
+  pushup: { sagMin: 165, pikeMin: 155, hipMin: 150, downAt: 105, upAt: 130 },
 };
 
 /**
@@ -32,7 +36,21 @@ export const GUARDS = {
   // Shoulder or hip moving more than this share of the trunk between two frames is a
   // different arm, not motion. Live: real motion peaked at ~0.17; ML Kit hopping between the
   // two arms of a seated user jumped 0.27-0.37 (and counted 6 phantom curls).
-  maxJumpRatio: 0.25,};
+  maxJumpRatio: 0.25,
+  // A body that was already tracked may fail the plausibility checks this many frames in a
+  // row before tracking restarts from zero. Live pushups: at the bottom of every rep the
+  // near forearm shrank to ~19px for 2-3 frames, and the full stableFrames re-earn blanked
+  // the skeleton for about a second each rep.
+  maxMisses: 3,
+  // Pushup arms whose angles differ by more than this are not averaged (one is noise).
+  maxArmDisagree: 40,
+  // Pushups confirm a phase change in fewer frames: at the phone's ~5fps a fast rep spends
+  // only 1-2 frames at the top, and 3 frames left 4 quick live reps stuck in DOWN.
+  pushupConfirmFrames: 2,
+  // A real shin never tips further than this from vertical in a squat; beyond it the ankle
+  // landmark is noise (live: lost ankles read 90-116 deg) and the leg checks are skipped.
+  maxShinLean: 70,
+};
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -119,7 +137,11 @@ const isPlausiblePushup = (shoulder, hip, knee, elbow, wrist) =>
  * after GUARDS.confirmFrames consecutive frames agree, and a completed rep is only
  * counted if at least GUARDS.minRepMs passed since the previous one.
  */
-const advancePhase = (prevState, { upPhase, downPhase, inDown, inUp, downSure = false }, now) => {
+const advancePhase = (
+  prevState,
+  { upPhase, downPhase, inDown, inUp, downSure = false, confirmFrames = GUARDS.confirmFrames },
+  now
+) => {
   // Anything that is not the down phase counts as the up phase. The rep state carried between
   // frames is seeded generically (useCamera starts it at 'UP'), and the squat and pushup both
   // happen to name their phases UP/DOWN -- but a curl names them EXTENDED/FLEXED. Matching the
@@ -139,7 +161,7 @@ const advancePhase = (prevState, { upPhase, downPhase, inDown, inUp, downSure = 
   // `downSure`: the caller has independent evidence the down position is real (see the
   // curl), so a quick rep whose bottom lasts only a frame or two is not thrown away.
   const sure = target === downPhase && downSure;
-  if (!sure && count < GUARDS.confirmFrames) {
+  if (!sure && count < confirmFrames) {
     return { phase, lastRepAt, pending: { to: target, count }, isRepCompleted: false };
   }
   const completesRep = target === upPhase && now - lastRepAt >= GUARDS.minRepMs;
@@ -196,7 +218,11 @@ export const PostureEngine = {
     const hip = leftSideVisible ? joints.leftHip : joints.rightHip;
     const knee = leftSideVisible ? joints.leftKnee : joints.rightKnee;
     const ankle = leftSideVisible ? joints.leftAnkle : joints.rightAnkle;
-    const foot = ankle || (hip && knee ? shinFoot(hip, knee) : null);
+    // An ankle at or above the knee, or a "shin" tipped past maxShinLean, is a lost landmark,
+    // not a leg: it bent the knee angle into false "too deep" warnings. Use the stand-in then.
+    const ankleOk = !!(ankle && knee && ankle.y > knee.y &&
+      this.calculateAngle(knee, ankle, { x: ankle.x, y: ankle.y - 100 }) <= GUARDS.maxShinLean);
+    const foot = ankleOk ? ankle : (hip && knee ? shinFoot(hip, knee) : null);
 
     if (!shoulder || !hip || !knee || !foot || !isPlausibleSquat(shoulder, hip, knee, foot)) {
       return { joints, isPostureCorrect: true, isTracking: false, warning: 'Position yourself clearly in frame', nextState: { ...prevState, pending: null, streak: 0 } };
@@ -240,6 +266,34 @@ export const PostureEngine = {
       warning = 'Squatting too deep! Protect knees. ⚠️';
       if (leftSideVisible) checkedJoints.leftKnee.correct = false;
       if (rightSideVisible) checkedJoints.rightKnee.correct = false;
+    }
+
+    // Leg checks, judged only on a real (detected) ankle, never the stand-in foot.
+    // Knees travelling past the toes is normal and safe in a squat as long as the heels stay
+    // down, so moderate forward knee travel is NOT a fault (live: a user's knee-forward squat
+    // put the shin at 32-33 deg from vertical, which is fine). What IS a fault is extreme
+    // forward travel: the shin tipped far over (> kneeForwardMax from vertical), which loads
+    // the knee and usually means the hips are not sitting back.
+    //
+    // Heel lift is deliberately NOT checked. It was tried (heel vs toe height) and measured
+    // live: with the phone low and the feet at the bottom edge of the frame, flat-footed
+    // standing already read heel-above-toe at a median 23% of foot length, 47% at p90 and up
+    // to 89%, so no threshold told a real lift from landmark noise (133 mostly-false warnings
+    // in one set). The heel and toe points are still logged and drawn.
+    //
+    // A shin is only judged when it can be real: ankle below the knee and tipped no more than
+    // GUARDS.maxShinLean. Live, a lost ankle near the bottom edge put "shins" at 90-116 deg
+    // (pointing upward) and fired 21 false "knees too far forward" warnings in deep squats
+    // and while the user was still walking into frame.
+    const side = leftSideVisible ? 'left' : 'right';
+    const shinLean = ankle ? this.calculateAngle(knee, ankle, { x: ankle.x, y: ankle.y - 100 }) : 180;
+    if (ankleOk) {
+      if (shinLean > THRESHOLDS.squat.kneeForwardMax) {
+        isPostureCorrect = false;
+        warning = warning || 'Knees too far forward! Sit your hips back. ⚠️';
+        checkedJoints[`${side}Knee`].correct = false;
+        checkedJoints[`${side}Ankle`].correct = false;
+      }
     }
 
     // Repetition state tracking
@@ -362,47 +416,85 @@ export const PostureEngine = {
   evaluatePushup(joints, prevState, now = Date.now()) {
     if (isFacingCamera(joints)) return turnSideways(joints, prevState);
 
-    const leftSideVisible = joints.leftShoulder && joints.leftHip && joints.leftKnee;
-    const rightSideVisible = joints.rightShoulder && joints.rightHip && joints.rightKnee;
+    // Score whichever side of the body passes the plausibility checks, left first. From the
+    // side the far arm is partly hidden, and at the bottom of a rep ML Kit often squashes
+    // one forearm to a stub while the other stays clean; falling back keeps tracking alive.
+    const sideOf = s => ({
+      shoulder: joints[`${s}Shoulder`],
+      hip: joints[`${s}Hip`],
+      knee: joints[`${s}Knee`],
+      elbow: joints[`${s}Elbow`],
+      wrist: joints[`${s}Wrist`],
+    });
+    const side = ['left', 'right'].find(s => {
+      const p = sideOf(s);
+      return p.shoulder && p.hip && p.knee && p.elbow && p.wrist &&
+        isPlausiblePushup(p.shoulder, p.hip, p.knee, p.elbow, p.wrist);
+    });
 
-    const shoulder = leftSideVisible ? joints.leftShoulder : joints.rightShoulder;
-    const hip = leftSideVisible ? joints.leftHip : joints.rightHip;
-    const knee = leftSideVisible ? joints.leftKnee : joints.rightKnee;
-    const elbow = leftSideVisible ? joints.leftElbow : joints.rightElbow;
-    const wrist = leftSideVisible ? joints.leftWrist : joints.rightWrist;
-
-    if (!shoulder || !hip || !knee || !elbow || !wrist || !isPlausiblePushup(shoulder, hip, knee, elbow, wrist)) {
-      return { joints, isPostureCorrect: true, isTracking: false, warning: 'Position for pushup', nextState: { ...prevState, pending: null, streak: 0 } };
+    if (!side) {
+      // A body tracked a moment ago gets a few frames' grace: no warning, and the streak is
+      // kept so the next good frame is scored at once (the screen holds the last skeleton).
+      const misses = (prevState?.misses || 0) + 1;
+      if ((prevState?.streak || 0) >= GUARDS.stableFrames && misses <= GUARDS.maxMisses) {
+        return { joints, isPostureCorrect: true, isTracking: false, warning: '', nextState: { ...prevState, misses } };
+      }
+      return { joints, isPostureCorrect: true, isTracking: false, warning: 'Position for pushup', nextState: { ...prevState, pending: null, streak: 0, misses: 0 } };
     }
+
+    const { shoulder, hip, knee, elbow, wrist } = sideOf(side);
 
     // A real body stays plausible; noise rarely does for several frames in a row.
     const streak = (prevState?.streak || 0) + 1;
     if (streak < GUARDS.stableFrames) {
-      return { joints, isPostureCorrect: true, isTracking: false, warning: '', nextState: { ...prevState, pending: null, streak } };
+      return { joints, isPostureCorrect: true, isTracking: false, warning: '', nextState: { ...prevState, pending: null, streak, misses: 0 } };
     }
 
-    // 1. Trunk alignment (hip angle)
-    const hipAngle = this.calculateAngle(shoulder, hip, knee);
-    
+    // 1. Body line (hip angle). Measured to the ankle, not the knee: a sagging body drops the
+    // knees together with the hips, so shoulder-hip-knee still read 160-175 ("straight") on
+    // visibly sagging reps. Shoulder-hip-ankle read 173-179 straight and 143-162 sagging.
+    // Without a visible ankle, fall back to the knee with the looser limit.
+    const ankle = joints[`${side}Ankle`];
+    const useAnkle = !!ankle && dist(hip, ankle) >= GUARDS.minSegmentPx;
+    const lineEnd = useAnkle ? ankle : knee;
+    const hipAngle = this.calculateAngle(shoulder, hip, lineEnd);
+
     // 2. Arm flex angle
-    const elbowAngle = this.calculateAngle(shoulder, elbow, wrist);
+    // Both arms bend together in a pushup. When the other arm also looks like an arm and the
+    // two agree, use their average: one arm alone is often half hidden or squashed by ML Kit
+    // (live: one arm read 104 while the other read 82 on the same rep).
+    let elbowAngle = this.calculateAngle(shoulder, elbow, wrist);
+    const other = side === 'left' ? 'right' : 'left';
+    const oS = joints[`${other}Shoulder`], oE = joints[`${other}Elbow`], oW = joints[`${other}Wrist`];
+    if (oS && oE && oW && similarLength(dist(oS, oE), dist(oE, oW), GUARDS.maxLimbRatio)) {
+      const otherAngle = this.calculateAngle(oS, oE, oW);
+      if (Math.abs(otherAngle - elbowAngle) <= GUARDS.maxArmDisagree) {
+        elbowAngle = (elbowAngle + otherAngle) / 2;
+      }
+    }
 
     let isPostureCorrect = true;
     let warning = '';
 
     const checkedJoints = JSON.parse(JSON.stringify(joints));
 
-    // The angle is unsigned (0-180), so use the hip's side of the shoulder-knee
-    // line to tell sagging (hip below the line) from piking (hip above it).
-    if (hipAngle < THRESHOLDS.pushup.hipMin) {
+    // The angle is unsigned (0-180), so use the hip's side of the shoulder-ankle (or knee)
+    // line to tell sagging (hip below the line) from piking (hip above it). Sagging is the
+    // fault that hurts the lower back, so it gets the stricter limit.
+    const dx = lineEnd.x - shoulder.x;
+    const lineY = dx === 0
+      ? (shoulder.y + lineEnd.y) / 2
+      : shoulder.y + ((lineEnd.y - shoulder.y) * (hip.x - shoulder.x)) / dx;
+    const sagging = hip.y > lineY;
+    const limit = !useAnkle
+      ? THRESHOLDS.pushup.hipMin
+      : sagging ? THRESHOLDS.pushup.sagMin : THRESHOLDS.pushup.pikeMin;
+    if (hipAngle < limit) {
       isPostureCorrect = false;
-      const dx = knee.x - shoulder.x;
-      const lineY = dx === 0
-        ? (shoulder.y + knee.y) / 2
-        : shoulder.y + ((knee.y - shoulder.y) * (hip.x - shoulder.x)) / dx;
-      warning = hip.y > lineY ? 'Don\'t sag your hips! 🧘' : 'Hips too high! ⚠️';
-      if (leftSideVisible) checkedJoints.leftHip.correct = false;
-      if (rightSideVisible) checkedJoints.rightHip.correct = false;
+      warning = sagging ? 'Don\'t sag your hips! 🧘' : 'Hips too high! ⚠️';
+      // Both hips go red (whichever side was scored): it is one body line.
+      if (checkedJoints.leftHip) checkedJoints.leftHip.correct = false;
+      if (checkedJoints.rightHip) checkedJoints.rightHip.correct = false;
     }
 
     // Repetition tracking
@@ -413,11 +505,12 @@ export const PostureEngine = {
         downPhase: 'DOWN',
         inDown: elbowAngle <= THRESHOLDS.pushup.downAt && isPostureCorrect,
         inUp: elbowAngle >= THRESHOLDS.pushup.upAt,
+        confirmFrames: GUARDS.pushupConfirmFrames,
       },
       now
     );
 
-    return { joints: checkedJoints, isPostureCorrect, warning, isRepCompleted, nextState: { ...nextState, streak } };
+    return { joints: checkedJoints, isPostureCorrect, warning, isRepCompleted, nextState: { ...nextState, streak, misses: 0 } };
   }
 };
 

@@ -11,10 +11,13 @@
  */
 
 const DEFAULTS = {
-  minCutoff: 0.6, // Hz: smoothing for a joint at rest; lower = steadier but laggier
+  // Live squats: 0.6 Hz / 0.007 left the knee up to 31px behind on fast moves (felt slow).
+  // 1.0 / 0.01 cuts that to 24px (avg 6.7 -> 5.0px) and still passes the hold-still shiver
+  // test; 0.015 and up let the jitter through again.
+  minCutoff: 1.0, // Hz: smoothing for a joint at rest; lower = steadier but laggier
   // How quickly the cutoff opens up with speed (px/s). Higher let the jitter itself (~150px/s
   // of frame-to-frame noise) count as motion and pass straight through.
-  beta: 0.007,
+  beta: 0.01,
   dCutoff: 1.0, // Hz: smoothing of the speed estimate itself
   resetAfterMs: 400, // a joint unseen for this long starts afresh instead of gliding back
 };

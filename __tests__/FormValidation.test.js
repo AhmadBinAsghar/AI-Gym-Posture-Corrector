@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { showDialog } from '../src/components/AppDialog';
 import TestRenderer, { act } from 'react-test-renderer';
 import { useLogin } from '../src/features/auth/login/hooks/useLogin';
 import { useRegister } from '../src/features/auth/register/hooks/useRegister';
@@ -9,6 +9,7 @@ jest.mock('react-redux', () => ({ useDispatch: () => mockDispatch }));
 jest.mock('../src/api/supabase', () => ({ isSupabaseConfigured: true, supabase: { auth: {} } }));
 jest.mock('../src/utils/storage', () => ({ LocalStorage: {} }));
 const mockResetTo = jest.fn();
+jest.mock('../src/components/AppDialog', () => ({ showDialog: jest.fn() }));
 jest.mock('../src/utils/navigationReset', () => ({ resetTo: (...a) => mockResetTo(...a) }));
 
 // Renders a hook and exposes its latest return value.
@@ -40,7 +41,7 @@ const nav = {};
 beforeEach(() => {
   mockDispatch.mockReset();
   mockResetTo.mockReset();
-  jest.spyOn(Alert, 'alert').mockImplementation(() => {}).mockClear();
+  showDialog.mockClear();
 });
 
 describe('login validation', () => {
@@ -98,7 +99,7 @@ describe('login validation', () => {
     await submit(h.current.handleLogin);
     expect(mockDispatch).toHaveBeenCalledTimes(1);
     expect(mockResetTo).toHaveBeenCalledWith(nav, 'Dashboard');
-    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(showDialog).not.toHaveBeenCalled();
   });
 
   test('a server error (wrong password) shows an alert and stays on the screen', async () => {
@@ -110,7 +111,7 @@ describe('login validation', () => {
     const h = renderHook(() => useLogin(nav));
     fill(h, { handleChangeEmail: 'a@b.co', handleChangePassword: 'password1' });
     await submit(h.current.handleLogin);
-    expect(Alert.alert).toHaveBeenCalledWith('Login failed', 'Invalid login credentials');
+    expect(showDialog).toHaveBeenCalledWith('Login failed', 'Invalid login credentials', null, expect.anything());
     expect(mockResetTo).not.toHaveBeenCalled();
     expect(h.current.isLoading).toBe(false); // the button is usable again
   });
@@ -183,7 +184,7 @@ describe('register validation', () => {
     const h = renderHook(() => useRegister(nav));
     fill(h, valid);
     await submit(h.current.handleRegister);
-    expect(Alert.alert).toHaveBeenCalledWith('Registration', expect.stringMatching(/confirm your email/i));
+    expect(showDialog).toHaveBeenCalledWith('Registration', expect.stringMatching(/confirm your email/i), null, expect.anything());
     expect(mockResetTo).not.toHaveBeenCalled();
   });
 });

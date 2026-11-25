@@ -5,7 +5,7 @@ const INTROS = {
   'Bicep Curls':
     'Bicep curls. Put the phone at chest height facing you, so your shoulder, arm and hand fill the frame. Then start curling.',
   Pushups:
-    'Pushups. Place your phone low and to your side, so your whole body is in the frame. Then start your pushups.',
+    'Pushups. Stand your phone sideways on the floor, a couple of meters to your side, so your whole body is in the frame. Then start your pushups.',
 };
 
 const DEFAULT_INTRO = 'Place your phone so your whole body is in the frame, then start.';

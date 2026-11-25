@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert } from 'react-native';
+import { showDialog } from '../../../../components/AppDialog';
 import { useDispatch } from 'react-redux';
 import { loginWithEmail, setGuestUser } from '../../../../redux/slices/authSlice';
 import { resetTo } from '../../../../utils/navigationReset';
@@ -63,7 +63,7 @@ export const useLogin = (navigation) => {
       await dispatch(loginWithEmail({ email: email.trim(), password })).unwrap();
       resetTo(navigation, 'Dashboard');
     } catch (message) {
-      Alert.alert('Login failed', typeof message === 'string' ? message : 'Something went wrong.');
+      showDialog('Login failed', typeof message === 'string' ? message : 'Something went wrong.', null, { icon: '🔒' });
     } finally {
       setIsLoading(false);
     }

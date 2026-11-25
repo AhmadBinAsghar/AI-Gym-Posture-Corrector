@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert } from 'react-native';
+import { showDialog } from '../../../../components/AppDialog';
 import { useDispatch } from 'react-redux';
 import { registerWithEmail } from '../../../../redux/slices/authSlice';
 import { resetTo } from '../../../../utils/navigationReset';
@@ -110,7 +110,7 @@ export const useRegister = (navigation) => {
       ).unwrap();
       resetTo(navigation, 'Dashboard');
     } catch (message) {
-      Alert.alert('Registration', typeof message === 'string' ? message : 'Something went wrong.');
+      showDialog('Registration', typeof message === 'string' ? message : 'Something went wrong.', null, { icon: '📝' });
     } finally {
       setIsLoading(false);
     }

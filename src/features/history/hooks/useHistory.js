@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert } from 'react-native';
+import { showDialog } from '../../../components/AppDialog';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigation } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
@@ -47,15 +47,17 @@ export const useHistory = () => {
       // A skipped sync (one already running) is not an error worth showing.
       if (e?.name === 'ConditionError') return;
       const needsLogin = typeof e === 'string' && /log in again/i.test(e);
-      Alert.alert(
+      showDialog(
         'Sync failed',
-        needsLogin ? e : 'Could not reach the cloud. Your workouts are safe on this device.'
+        needsLogin ? e : 'Could not reach the cloud. Your workouts are safe on this device.',
+        null,
+        { icon: '☁️' }
       );
     }
   };
 
   const handleClear = () => {
-    Alert.alert(
+    showDialog(
       'Reset local history?',
       'This deletes your workouts from this device, including any not yet synced.',
       [
@@ -65,7 +67,8 @@ export const useHistory = () => {
           style: 'destructive',
           onPress: () => dispatch(clearHistoryOffline(user?.id)),
         },
-      ]
+      ],
+      { icon: '🗑️' }
     );
   };
 

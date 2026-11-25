@@ -6,11 +6,12 @@ import { heightPercentageToDP as hp } from 'react-native-responsive-screen';
  * HUD Real-time Posture warning alert card
  */
 // `isInfo`: a positioning hint (nobody in frame) rather than a form error, so it is amber.
-const CustomAlert = ({ message, isVisible, isInfo = false }) => {
+// `style`: position overrides (the landscape camera moves it up, clear of the lying body).
+const CustomAlert = ({ message, isVisible, isInfo = false, style }) => {
   if (!isVisible || !message) return null;
 
   return (
-    <View style={[styles.container, isInfo && styles.containerInfo]}>
+    <View style={[styles.container, isInfo && styles.containerInfo, style]}>
       <View style={styles.alertBar} />
       <View style={styles.content}>
         <Text style={styles.icon}>{isInfo ? 'ℹ️' : '⚠️'}</Text>

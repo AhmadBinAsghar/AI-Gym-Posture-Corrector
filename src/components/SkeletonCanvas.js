@@ -21,6 +21,11 @@ const BONES = [
   ['leftKnee', 'leftAnkle'],
   ['rightHip', 'rightKnee'],
   ['rightKnee', 'rightAnkle'],
+  // Feet (the squat's heel check reddens these)
+  ['leftAnkle', 'leftHeel'],
+  ['leftHeel', 'leftFootIndex'],
+  ['rightAnkle', 'rightHeel'],
+  ['rightHeel', 'rightFootIndex'],
 ];
 
 // Bone thickness. The rounded ends double as the joint markers, which is why there is no

@@ -23,6 +23,9 @@ export const TRACKED_JOINTS = [
   'leftHip', 'rightHip',
   'leftKnee', 'rightKnee',
   'leftAnkle', 'rightAnkle',
+  // The squat's heel-lift check needs the foot.
+  'leftHeel', 'rightHeel',
+  'leftFootIndex', 'rightFootIndex',
 ];
 
 export const MIN_CONFIDENCE = 0.5;

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Alert } from 'react-native';
+import { showDialog } from '../../../components/AppDialog';
 import { useDispatch, useSelector } from 'react-redux';
 import { logout } from '../../../redux/slices/authSlice';
 import { startWorkout } from '../../../redux/slices/exerciseSlice';
@@ -59,7 +59,7 @@ export const useDashboard = () => {
   };
 
   const handleLogout = () => {
-    Alert.alert(
+    showDialog(
       'Log Out',
       'Are you sure you want to end your current session?',
       [
@@ -72,7 +72,8 @@ export const useDashboard = () => {
             resetTo(navigation, 'Login');
           },
         },
-      ]
+      ],
+      { icon: '👋' }
     );
   };
 

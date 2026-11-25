@@ -12,7 +12,7 @@ const ExerciseCard = ({ exercise, onPress }) => {
   
   return (
     <TouchableOpacity
-      activeOpacity={0.85}
+      activeOpacity={0.7}
       onPress={onPress}
       style={styles.card}
     >
